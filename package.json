@@ -1,13 +1,15 @@
 {
   "name": "parler-app",
   "private": true,
-  "version": "0.9.1",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "deploy:local": "bash scripts/deploy-local.sh",
+    "setup:local-signing": "bash scripts/setup-local-signing.sh",
     "tauri:dev:parlerdev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build:parlerdev": "tauri build --config src-tauri/tauri.dev.conf.json",
     "lint": "eslint src",

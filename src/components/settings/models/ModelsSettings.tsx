@@ -7,13 +7,21 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Globe, Plus, RefreshCcw, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  Globe,
+  Plus,
+  Pencil,
+  RefreshCcw,
+  Trash2,
+  X,
+} from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
-import type { ModelInfo } from "@/bindings";
+import type { LLMModel, ModelInfo } from "@/bindings";
 import { commands } from "@/bindings";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -29,7 +37,6 @@ const LanguageModelsSection: React.FC = () => {
   const {
     settings,
     refreshSettings,
-    fetchPostProcessModels,
     updatePostProcessApiKey,
     postProcessModelOptions,
   } = useSettings();
@@ -44,6 +51,10 @@ const LanguageModelsSection: React.FC = () => {
   );
 
   const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftModelOptions, setDraftModelOptions] = useState<string[] | null>(
+    null,
+  );
   const [providerId, setProviderId] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [model, setModel] = useState("");
@@ -54,7 +65,8 @@ const LanguageModelsSection: React.FC = () => {
 
   const isAppleIntelligence = providerId === "apple_intelligence";
   const currentApiKey = apiKeys[providerId] || "";
-  const fetchedModels = postProcessModelOptions[providerId] || [];
+  const fetchedModels =
+    draftModelOptions ?? postProcessModelOptions[providerId] ?? [];
   const modelSelectOptions = useMemo(
     () => fetchedModels.map((m) => ({ value: m, label: m })),
     [fetchedModels],
@@ -67,6 +79,8 @@ const LanguageModelsSection: React.FC = () => {
 
   const resetForm = useCallback(() => {
     setIsAdding(false);
+    setEditingId(null);
+    setDraftModelOptions(null);
     setProviderId("");
     setApiKeyInput("");
     setModel("");
@@ -79,6 +93,8 @@ const LanguageModelsSection: React.FC = () => {
       providerOptions.find((p) => p.value !== "apple_intelligence")?.value ||
       providerOptions[0]?.value ||
       "";
+    setEditingId(null);
+    setDraftModelOptions(null);
     setProviderId(first);
     setApiKeyInput(apiKeys[first] || "");
     setModel("");
@@ -87,8 +103,23 @@ const LanguageModelsSection: React.FC = () => {
     setIsAdding(true);
   }, [providerOptions, apiKeys]);
 
+  const startEditing = useCallback(
+    (saved: LLMModel) => {
+      setEditingId(saved.id);
+      setProviderId(saved.provider_id);
+      setApiKeyInput(apiKeys[saved.provider_id] || "");
+      setModel(saved.model);
+      setLabel(saved.label);
+      setDraftModelOptions(null);
+      setError(null);
+      setIsAdding(true);
+    },
+    [apiKeys],
+  );
+
   const handleProviderChange = useCallback(
     (id: string) => {
+      setDraftModelOptions(null);
       setProviderId(id);
       setApiKeyInput(apiKeys[id] || "");
       setModel("");
@@ -96,54 +127,61 @@ const LanguageModelsSection: React.FC = () => {
     [apiKeys],
   );
 
-  const handleApiKeyBlur = useCallback(async () => {
-    if (!providerId || apiKeyInput === currentApiKey) return;
-    await updatePostProcessApiKey(providerId, apiKeyInput.trim());
-  }, [apiKeyInput, currentApiKey, providerId, updatePostProcessApiKey]);
-
   const handleFetchModels = useCallback(async () => {
     if (!providerId) return;
-    if (apiKeyInput.trim() && apiKeyInput !== currentApiKey) {
-      await updatePostProcessApiKey(providerId, apiKeyInput.trim());
-    }
     setIsFetching(true);
     setError(null);
     try {
-      await fetchPostProcessModels(providerId);
+      const result = await commands.fetchPostProcessModels(
+        providerId,
+        apiKeyInput.trim(),
+      );
+      if (result.status === "ok") setDraftModelOptions(result.data);
+      else setError(String(result.error));
+    } catch (error) {
+      setError(String(error));
     } finally {
       setIsFetching(false);
     }
-  }, [
-    providerId,
-    apiKeyInput,
-    currentApiKey,
-    fetchPostProcessModels,
-    updatePostProcessApiKey,
-  ]);
+  }, [providerId, apiKeyInput]);
 
   const handleSave = useCallback(async () => {
     if (!providerId || !model.trim()) return;
     setIsSaving(true);
     setError(null);
     try {
-      if (apiKeyInput.trim() && apiKeyInput !== currentApiKey) {
-        await updatePostProcessApiKey(providerId, apiKeyInput.trim());
-      }
-      const result = await commands.addLlmModel(
-        providerId,
-        model.trim(),
-        label.trim(),
-      );
+      const result = editingId
+        ? await commands.updateLlmModel(
+            editingId,
+            providerId,
+            model.trim(),
+            label.trim(),
+            !isAppleIntelligence && apiKeyInput.trim() !== currentApiKey
+              ? apiKeyInput.trim()
+              : null,
+          )
+        : await commands.addLlmModel(providerId, model.trim(), label.trim());
       if (result.status === "ok") {
+        if (
+          !editingId &&
+          !isAppleIntelligence &&
+          apiKeyInput.trim() !== currentApiKey
+        ) {
+          await updatePostProcessApiKey(providerId, apiKeyInput.trim());
+        }
         await refreshSettings();
         resetForm();
       } else {
         setError(String(result.error));
       }
+    } catch (error) {
+      setError(String(error));
     } finally {
       setIsSaving(false);
     }
   }, [
+    editingId,
+    isAppleIntelligence,
     providerId,
     model,
     label,
@@ -183,13 +221,25 @@ const LanguageModelsSection: React.FC = () => {
                   {providerLabel(m.provider_id)} · {m.model}
                 </p>
               </div>
-              <button
-                onClick={() => handleDelete(m.id)}
-                className="p-1.5 rounded-md text-text/50 hover:text-red-500 transition-colors shrink-0"
-                title={t("common.delete")}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => startEditing(m)}
+                  className="p-1.5 rounded-md text-text/50 hover:text-logo-primary transition-colors"
+                  title={t("settings.models.languageModels.editModel", {
+                    defaultValue: "Edit model",
+                  })}
+                  aria-label={`${t("common.edit")} ${m.label}`}
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(m.id)}
+                  className="p-1.5 rounded-md text-text/50 hover:text-red-500 transition-colors shrink-0"
+                  title={t("common.delete")}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -209,7 +259,11 @@ const LanguageModelsSection: React.FC = () => {
         <div className="space-y-3 p-3 rounded-lg border border-logo-primary/40 bg-mid-gray/5">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">
-              {t("settings.models.languageModels.addModel")}
+              {editingId
+                ? t("settings.models.languageModels.editModel", {
+                    defaultValue: "Edit model",
+                  })
+                : t("settings.models.languageModels.addModel")}
             </h3>
             <button
               onClick={resetForm}
@@ -240,12 +294,17 @@ const LanguageModelsSection: React.FC = () => {
                 type="password"
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
-                onBlur={handleApiKeyBlur}
                 placeholder={t(
                   "settings.models.languageModels.apiKeyPlaceholder",
                 )}
                 variant="compact"
               />
+              <p className="text-xs text-text/50">
+                {t("settings.models.languageModels.apiKeyHint", {
+                  defaultValue:
+                    "The key is shared by all models from this provider. Changes are applied when you save.",
+                })}
+              </p>
             </div>
           )}
 

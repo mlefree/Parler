@@ -151,7 +151,7 @@ const AudioBars: React.FC = () => {
             const v = smoothed[i] || 0;
             const el = bars[i] as HTMLElement;
             el.style.height = `${Math.min(20, 3 + Math.pow(v, 0.6) * 17)}px`;
-            el.style.opacity = `${Math.max(0.25, v * 1.4)}`;
+            el.style.opacity = `${Math.min(1, Math.max(0.6, v * 1.4))}`;
           }
         }
       });

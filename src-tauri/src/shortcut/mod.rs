@@ -1072,6 +1072,7 @@ pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), Stri
 pub async fn fetch_post_process_models(
     app: AppHandle,
     provider_id: String,
+    api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
     let settings = settings::get_settings(&app);
 
@@ -1095,10 +1096,8 @@ pub async fn fetch_post_process_models(
     }
 
     // Get API key
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider_id)
-        .cloned()
+    let api_key = api_key
+        .or_else(|| settings.post_process_api_keys.get(&provider_id).cloned())
         .unwrap_or_default();
 
     // Skip fetching if no API key for providers that typically need one
@@ -1196,6 +1195,171 @@ pub fn add_llm_model(
 
 #[tauri::command]
 #[specta::specta]
+pub fn update_llm_model(
+    app: AppHandle,
+    id: String,
+    provider_id: String,
+    model: String,
+    label: String,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    update_saved_llm_model(&mut settings, &id, provider_id, model, label, api_key)?;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+fn update_saved_llm_model(
+    settings: &mut settings::AppSettings,
+    id: &str,
+    provider_id: String,
+    model: String,
+    label: String,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    validate_provider_exists(settings, &provider_id)?;
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err("Model cannot be empty".into());
+    }
+    if settings
+        .llm_models
+        .iter()
+        .any(|m| m.id != id && m.provider_id == provider_id && m.model == model)
+    {
+        return Err("This model is already saved".into());
+    }
+    let saved = settings
+        .llm_models
+        .iter_mut()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("Language model '{}' not found", id))?;
+    // Preserve the ID so post-process actions keep referencing this model.
+    saved.provider_id = provider_id.clone();
+    saved.label = if label.trim().is_empty() {
+        model.clone()
+    } else {
+        label.trim().into()
+    };
+    saved.model = model;
+    if let Some(key) = api_key {
+        settings
+            .post_process_api_keys
+            .insert(provider_id, key.trim().into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod model_edit_tests {
+    use super::*;
+
+    fn fixture() -> settings::AppSettings {
+        let mut settings = settings::get_default_settings();
+        settings.llm_models.push(settings::LLMModel {
+            id: "saved".into(),
+            provider_id: "mistral".into(),
+            model: "mistral-small-latest".into(),
+            label: "Brain".into(),
+        });
+        settings
+            .post_process_api_keys
+            .insert("mistral".into(), "old-test-key".into());
+        settings
+            .post_process_actions
+            .push(settings::PostProcessAction {
+                id: "brain".into(),
+                name: "Brain".into(),
+                prompt: "Correct ${output}".into(),
+                llm_model_id: Some("saved".into()),
+                icon: "sparkles".into(),
+                trigger_key: None,
+                brain_path: None,
+                communication_channel: None,
+            });
+        settings
+    }
+
+    #[test]
+    fn rotates_key_without_recreating_model_or_losing_actions() {
+        let mut settings = fixture();
+        update_saved_llm_model(
+            &mut settings,
+            "saved",
+            "mistral".into(),
+            "mistral-small-latest".into(),
+            "Renamed".into(),
+            Some(" new-test-key ".into()),
+        )
+        .unwrap();
+        assert_eq!(settings.llm_models.len(), 1);
+        assert_eq!(settings.llm_models[0].id, "saved");
+        assert_eq!(settings.llm_models[0].label, "Renamed");
+        assert_eq!(
+            settings.post_process_actions[0].llm_model_id.as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            settings.post_process_api_keys.get("mistral").unwrap(),
+            "new-test-key"
+        );
+    }
+
+    #[test]
+    fn failed_edit_does_not_change_key_or_model() {
+        let mut settings = fixture();
+        settings.llm_models.push(settings::LLMModel {
+            id: "other".into(),
+            provider_id: "mistral".into(),
+            model: "taken".into(),
+            label: "Other".into(),
+        });
+        for (id, model, provider) in [
+            ("saved", "taken", "mistral"),
+            ("missing", "new", "mistral"),
+            ("saved", "", "mistral"),
+            ("saved", "new", "unknown"),
+        ] {
+            assert!(update_saved_llm_model(
+                &mut settings,
+                id,
+                provider.into(),
+                model.into(),
+                "Changed".into(),
+                Some("replacement-test-key".into())
+            )
+            .is_err());
+        }
+        assert_eq!(settings.llm_models[0].model, "mistral-small-latest");
+        assert_eq!(settings.llm_models[0].label, "Brain");
+        assert_eq!(
+            settings.post_process_api_keys.get("mistral").unwrap(),
+            "old-test-key"
+        );
+    }
+
+    #[test]
+    fn metadata_edit_preserves_key_and_blank_label_uses_model() {
+        let mut settings = fixture();
+        update_saved_llm_model(
+            &mut settings,
+            "saved",
+            "mistral".into(),
+            "new-model".into(),
+            " ".into(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(settings.llm_models[0].label, "new-model");
+        assert_eq!(
+            settings.post_process_api_keys.get("mistral").unwrap(),
+            "old-test-key"
+        );
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn delete_llm_model(app: AppHandle, id: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
 
@@ -1225,6 +1389,8 @@ pub fn add_post_process_action(
     llm_model_id: Option<String>,
     icon: String,
     trigger_key: Option<u8>,
+    brain_path: Option<String>,
+    communication_channel: Option<String>,
 ) -> Result<settings::PostProcessAction, String> {
     let mut settings = settings::get_settings(&app);
 
@@ -1247,6 +1413,10 @@ pub fn add_post_process_action(
             icon
         },
         trigger_key,
+        brain_path: crate::brain_context::validate_path(brain_path)?,
+        communication_channel: communication_channel
+            .filter(|c| !c.trim().is_empty())
+            .map(|c| c.trim().to_owned()),
     };
 
     settings.post_process_actions.push(action.clone());
@@ -1279,6 +1449,8 @@ pub fn update_post_process_action(
     llm_model_id: Option<String>,
     icon: String,
     trigger_key: Option<u8>,
+    brain_path: Option<String>,
+    communication_channel: Option<String>,
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
 
@@ -1307,6 +1479,10 @@ pub fn update_post_process_action(
         icon
     };
     action.trigger_key = trigger_key;
+    action.brain_path = crate::brain_context::validate_path(brain_path)?;
+    action.communication_channel = communication_channel
+        .filter(|c| !c.trim().is_empty())
+        .map(|c| c.trim().to_owned());
 
     // Keep the binding entry's display name in sync
     let binding_id = settings::action_binding_id(&id);

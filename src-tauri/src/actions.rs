@@ -1,6 +1,5 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -55,6 +54,60 @@ struct TranscribeAction {
     post_process: bool,
 }
 
+pub(crate) fn collect_learning_sample(
+    app: &AppHandle,
+    settings: &AppSettings,
+    audio: Option<&std::path::Path>,
+    details: &crate::managers::transcription::TranscriptionOutput,
+    processed: &ProcessedTranscription,
+    action: Option<&PostProcessAction>,
+    trace: Option<serde_json::Value>,
+    origin: &str,
+    error: Option<&str>,
+) {
+    if !settings.learning.enabled || !get_settings(app).learning.enabled {
+        return;
+    }
+    let configured_model = action.and_then(|a| {
+        a.llm_model_id
+            .as_deref()
+            .and_then(|id| settings.llm_model(id))
+            .or_else(|| settings.llm_models.first())
+    });
+    let input = crate::learning::Capture {
+        raw_transcript: details.raw_text.clone(),
+        transcript: details.text.clone(),
+        model_output: processed.post_processed_text.clone(),
+        output_text: processed.final_text.clone(),
+        brain_root: action.and_then(|a| a.brain_path.clone()).or_else(|| {
+            settings
+                .default_post_process_action()
+                .and_then(|a| a.brain_path.clone())
+        }),
+        metadata: serde_json::json!({"origin":origin,"asr":details,"error":error,
+            "post_processing":{"action_id":action.map(|a|&a.id),"action_prompt":action.map(|a|&a.prompt),"configured_model":configured_model,
+                "channel":action.and_then(|a|a.communication_channel.as_deref()),
+                "status":if processed.post_processed_text.is_some(){"succeeded"}else if action.is_some(){"failed"}else{"not_requested"},
+                "request":trace},
+            "recording_settings":{"microphone":settings.selected_microphone,"language":settings.selected_language,"requested_model":settings.selected_model,
+                "translate_to_english":settings.translate_to_english,"whisper_accelerator":settings.whisper_accelerator,
+                "ort_accelerator":settings.ort_accelerator},"paste_status":"not_observed"}),
+    };
+    match crate::learning::capture(&settings.learning, audio, input) {
+        Ok(Some(path)) => {
+            let _ = app.emit(
+                "learning-sample-added",
+                path.file_name().map(|s| s.to_string_lossy().into_owned()),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => {
+            error!("Failed to save learning sample: {}", error);
+            let _ = app.emit("learning-error", error);
+        }
+    }
+}
+
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
@@ -68,6 +121,41 @@ pub(crate) async fn run_post_process_action(
     text: &str,
     action: &PostProcessAction,
 ) -> Option<String> {
+    run_post_process_action_with_trace(settings, text, action)
+        .await
+        .map(|result| result.text)
+}
+
+pub(crate) struct PostProcessOutput {
+    pub text: String,
+    pub trace: serde_json::Value,
+}
+
+/// Bound context retrieval and the cloud correction; callers retain local text on failure.
+pub(crate) async fn run_post_process_action_with_trace(
+    settings: &AppSettings,
+    text: &str,
+    action: &PostProcessAction,
+) -> Option<PostProcessOutput> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        run_post_process_action_inner(settings, text, action),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            error!("Post-processing exceeded 8 seconds; keeping the local transcription");
+            None
+        }
+    }
+}
+
+async fn run_post_process_action_inner(
+    settings: &AppSettings,
+    text: &str,
+    action: &PostProcessAction,
+) -> Option<PostProcessOutput> {
     let model = action
         .llm_model_id
         .as_deref()
@@ -82,6 +170,8 @@ pub(crate) async fn run_post_process_action(
                 &action.prompt,
                 Some(&model.model),
                 Some(&model.provider_id),
+                action.brain_path.as_deref(),
+                action.communication_channel.as_deref(),
             )
             .await
         }
@@ -90,7 +180,16 @@ pub(crate) async fn run_post_process_action(
                 "Action '{}' has no saved language model; using active provider configuration",
                 action.id
             );
-            process_action(settings, text, &action.prompt, None, None).await
+            process_action(
+                settings,
+                text,
+                &action.prompt,
+                None,
+                None,
+                action.brain_path.as_deref(),
+                action.communication_channel.as_deref(),
+            )
+            .await
         }
     }
 }
@@ -101,7 +200,9 @@ async fn process_action(
     prompt: &str,
     action_model: Option<&str>,
     action_provider_id: Option<&str>,
-) -> Option<String> {
+    brain_path: Option<&str>,
+    communication_channel: Option<&str>,
+) -> Option<PostProcessOutput> {
     let provider = if let Some(pid) = action_provider_id.filter(|p| !p.is_empty()) {
         match settings.post_process_provider(pid).cloned() {
             Some(p) => p,
@@ -129,11 +230,52 @@ async fn process_action(
         .or_else(|| settings.post_process_models.get(&provider.id).cloned())
         .unwrap_or_default();
 
-    let full_prompt = if prompt.contains("${output}") {
+    let mut full_prompt = if prompt.contains("${output}") {
         prompt.replace("${output}", transcription)
     } else {
         format!("{}\n\n{}", prompt, transcription)
     };
+
+    let mut communication_profile = None;
+    let mut preferred_terms = None;
+    if let Some(path) = brain_path {
+        let path = path.to_owned();
+        let query = transcription.to_owned();
+        let channel = communication_channel.map(str::to_owned);
+        match tokio::task::spawn_blocking(move || {
+            let context = crate::brain_context::retrieve(&path, &query)?;
+            let profile =
+                crate::communication::load(std::path::Path::new(&path), channel.as_deref())?;
+            let terms = crate::lexicon::load(std::path::Path::new(&path))?.recognition_prompt(&[]);
+            Ok::<_, String>((context, profile, terms))
+        })
+        .await
+        {
+            Ok(Ok((context, profile, terms))) => {
+                communication_profile = profile;
+                preferred_terms = terms;
+                full_prompt.push_str("\n\n<reference_notes>\n");
+                full_prompt.push_str(&context);
+                full_prompt.push_str("\n</reference_notes>");
+            }
+            Ok(Err(error)) => {
+                error!("Brain context or communication preferences unavailable: {}; keeping the original transcription", error);
+                return None;
+            }
+            Err(error) => {
+                error!(
+                    "Brain context task failed: {}; keeping the original transcription",
+                    error
+                );
+                return None;
+            }
+        }
+    } else if communication_channel.is_some() {
+        error!(
+            "A communication channel requires a brain folder; keeping the original transcription"
+        );
+        return None;
+    }
 
     debug!(
         "Starting action processing with provider '{}', model '{}', prompt length: {}",
@@ -141,6 +283,19 @@ async fn process_action(
         model,
         full_prompt.len()
     );
+
+    let system_prompt = crate::communication::system_prompt(
+        brain_path.is_some(),
+        communication_profile.as_ref(),
+        preferred_terms.as_deref(),
+    );
+    let trace = if settings.learning.enabled {
+        serde_json::json!({"provider_id":provider.id,"model":model,"channel":communication_channel,
+            "system_prompt":system_prompt,"user_prompt":full_prompt,
+            "temperature":if provider.id=="mistral" {Some(0.0)} else {None}})
+    } else {
+        serde_json::Value::Null
+    };
 
     // Handle Apple Intelligence via native Swift APIs
     if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
@@ -152,8 +307,8 @@ async fn process_action(
             }
             let token_limit = model.trim().parse::<i32>().unwrap_or(0);
             return match apple_intelligence::process_text_with_system_prompt(
+                &system_prompt,
                 &full_prompt,
-                transcription,
                 token_limit,
             ) {
                 Ok(result) if !result.trim().is_empty() => {
@@ -162,7 +317,10 @@ async fn process_action(
                         "Apple Intelligence action processing succeeded. Output length: {} chars",
                         result.len()
                     );
-                    Some(result)
+                    Some(PostProcessOutput {
+                        text: result,
+                        trace,
+                    })
                 }
                 Ok(_) => {
                     debug!("Apple Intelligence action returned empty result");
@@ -196,7 +354,10 @@ async fn process_action(
         .cloned()
         .unwrap_or_default();
 
-    let system_prompt = "You are a text processing assistant. Output ONLY the final processed text. Do not add any explanation, commentary, preamble, or formatting such as markdown code blocks. Just output the raw result text, nothing else.".to_string();
+    if provider.id == "mistral" && api_key.trim().is_empty() {
+        error!("Mistral API key is missing; keeping the original transcription");
+        return None;
+    }
 
     match crate::llm_client::send_chat_completion_with_schema(
         &provider,
@@ -208,14 +369,17 @@ async fn process_action(
     )
     .await
     {
-        Ok(Some(content)) if !content.is_empty() => {
+        Ok(Some(content)) if !content.trim().is_empty() => {
             let result = strip_invisible_chars(&content);
             debug!(
                 "Action processing succeeded for provider '{}'. Output length: {} chars",
                 provider.id,
                 result.len()
             );
-            Some(result)
+            Some(PostProcessOutput {
+                text: result,
+                trace,
+            })
         }
         Ok(_) => {
             debug!("Action processing returned empty result");
@@ -333,21 +497,18 @@ impl ShortcutAction for TranscribeAction {
 
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // Get the microphone mode to determine audio feedback timing
+        // Apply mute after the microphone starts.
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
         debug!("Microphone mode - always_on: {}", is_always_on);
 
         let mut recording_error: Option<String> = None;
         if is_always_on {
-            // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
-            debug!("Always-on mode: Playing audio feedback immediately");
+            // The stream is already running in always-on mode.
+            debug!("Always-on mode: applying mute");
             let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
+            // Apply system mute without a feedback playback device.
             std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
                 rm_clone.apply_mute();
             });
 
@@ -356,22 +517,18 @@ impl ShortcutAction for TranscribeAction {
                 recording_error = Some(e);
             }
         } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
-            debug!("On-demand mode: Starting recording first, then audio feedback");
+            // Start the microphone before applying mute.
+            debug!("On-demand mode: starting recording before mute");
             let recording_start_time = Instant::now();
             match rm.try_start_recording(&binding_id) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
                     // Small delay to ensure microphone stream is active
-                    let app_clone = app.clone();
                     let rm_clone = Arc::clone(&rm);
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
-                        // Helper handles disabled audio feedback by returning early, so we reuse it
-                        // to keep mute sequencing consistent in every mode.
-                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                        debug!("Applying delayed recording mute");
+
                         rm_clone.apply_mute();
                     });
                 }
@@ -432,11 +589,8 @@ impl ShortcutAction for TranscribeAction {
         change_tray_icon(app, TrayIconState::Transcribing);
         show_transcribing_overlay(app);
 
-        // Unmute before playing audio feedback so the stop sound is audible
+        // Restore system audio after recording.
         rm.remove_mute();
-
-        // Play audio feedback for recording stop
-        play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string();
         let post_process = self.post_process;
@@ -483,7 +637,14 @@ impl ShortcutAction for TranscribeAction {
 
                     // Transcribe concurrently with WAV save
                     let transcription_time = Instant::now();
-                    let transcription_result = tm.transcribe(samples);
+                    let transcription_settings = get_settings(&ah);
+                    let brain_path = selected_action_id
+                        .as_deref()
+                        .and_then(|id| transcription_settings.post_process_action(id))
+                        .or_else(|| transcription_settings.default_post_process_action())
+                        .and_then(|a| a.brain_path.as_deref());
+                    let transcription_result =
+                        tm.transcribe_details_with_brain(samples, brain_path);
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -510,7 +671,8 @@ impl ShortcutAction for TranscribeAction {
                     };
 
                     match transcription_result {
-                        Ok(transcription) => {
+                        Ok(details) => {
+                            let transcription = details.text.clone();
                             debug!(
                                 "Transcription completed in {:?}: '{}'",
                                 transcription_time.elapsed(),
@@ -536,23 +698,52 @@ impl ShortcutAction for TranscribeAction {
                                 .cloned();
                             let post_process_requested = post_process || action.is_some();
 
-                            let processed = if let Some(action) = action {
+                            let mut learning_trace = None;
+                            let processed = if let Some(ref action) = action {
                                 show_processing_overlay(&ah);
                                 let base =
                                     process_transcription_output(&ah, &transcription, false).await;
-                                match run_post_process_action(&settings, &base.final_text, &action)
-                                    .await
+                                match run_post_process_action_with_trace(
+                                    &settings,
+                                    &base.final_text,
+                                    action,
+                                )
+                                .await
                                 {
-                                    Some(result) => ProcessedTranscription {
-                                        final_text: result.clone(),
-                                        post_processed_text: Some(result),
-                                        post_process_prompt: Some(action.prompt.clone()),
-                                    },
-                                    None => base,
+                                    Some(result) => {
+                                        learning_trace = Some(result.trace);
+                                        ProcessedTranscription {
+                                            final_text: result.text.clone(),
+                                            post_processed_text: Some(result.text),
+                                            post_process_prompt: Some(action.prompt.clone()),
+                                        }
+                                    }
+                                    None => {
+                                        let _ = ah.emit("post-process-fallback", ());
+                                        base
+                                    }
                                 }
                             } else {
                                 process_transcription_output(&ah, &transcription, false).await
                             };
+
+                            if transcription_settings.learning.enabled {
+                                collect_learning_sample(
+                                    &ah,
+                                    &settings,
+                                    if wav_saved {
+                                        Some(wav_path_for_verify.as_path())
+                                    } else {
+                                        None
+                                    },
+                                    &details,
+                                    &processed,
+                                    action.as_ref(),
+                                    learning_trace,
+                                    "live-dictation",
+                                    None,
+                                );
+                            }
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -594,6 +785,30 @@ impl ShortcutAction for TranscribeAction {
                         }
                         Err(err) => {
                             debug!("Global Shortcut Transcription error: {}", err);
+                            if transcription_settings.learning.enabled {
+                                let details =
+                                    crate::managers::transcription::TranscriptionOutput::default();
+                                let processed = ProcessedTranscription {
+                                    final_text: String::new(),
+                                    post_processed_text: None,
+                                    post_process_prompt: None,
+                                };
+                                collect_learning_sample(
+                                    &ah,
+                                    &transcription_settings,
+                                    if wav_saved {
+                                        Some(wav_path_for_verify.as_path())
+                                    } else {
+                                        None
+                                    },
+                                    &details,
+                                    &processed,
+                                    None,
+                                    None,
+                                    "live-dictation",
+                                    Some(&err.to_string()),
+                                );
+                            }
                             // Save entry with empty text so user can retry
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
@@ -684,3 +899,108 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+#[cfg(test)]
+mod offline_fallback_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn fixture(url: String) -> (AppSettings, PostProcessAction) {
+        let mut settings = crate::settings::get_default_settings();
+        let provider = settings
+            .post_process_providers
+            .iter_mut()
+            .find(|p| p.id == "mistral")
+            .unwrap();
+        provider.base_url = url;
+        settings
+            .post_process_api_keys
+            .insert("mistral".into(), "local-test-only".into());
+        settings.llm_models = vec![crate::settings::LLMModel {
+            id: "test".into(),
+            provider_id: "mistral".into(),
+            model: "test".into(),
+            label: "Test".into(),
+        }];
+        let action = PostProcessAction {
+            id: "test".into(),
+            name: "Test".into(),
+            prompt: "Correct ${output}".into(),
+            llm_model_id: Some("test".into()),
+            icon: "sparkles".into(),
+            trigger_key: None,
+            brain_path: None,
+            communication_channel: None,
+        };
+        (settings, action)
+    }
+
+    async fn server(response: String, stall: bool) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 8192];
+            socket.read(&mut buf).await.unwrap();
+            socket.write_all(response.as_bytes()).await.unwrap();
+            if stall {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn correction_errors_fall_back_and_success_is_preserved() {
+        for (status, body, expected) in [
+            (500, "unavailable", None),
+            (200, "invalid json", None),
+            (200, r#"{"choices":[]}"#, None),
+            (200, r#"{"choices":[{"message":{"content":"   "}}]}"#, None),
+            (
+                200,
+                r#"{"choices":[{"message":{"content":"MEG and DataForge."}}]}"#,
+                Some("MEG and DataForge."),
+            ),
+        ] {
+            let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let (url, task) = server(response, false).await;
+            let (settings, action) = fixture(url);
+            let result = run_post_process_action(&settings, "Meg and Data Forge", &action).await;
+            assert_eq!(result.as_deref(), expected);
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn correction_stalled_response_body_is_bounded() {
+        // Headers arrive promptly, but the JSON body never finishes.
+        let (url, task) = server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{".into(),
+            true,
+        )
+        .await;
+        let (settings, action) = fixture(url);
+        let start = Instant::now();
+        let result = run_post_process_action(&settings, "Texte local intact", &action).await;
+        assert!(result.is_none());
+        assert!(start.elapsed() >= std::time::Duration::from_secs(4));
+        assert!(start.elapsed() < std::time::Duration::from_secs(7));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn correction_connection_refused_returns_local_fallback() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let (settings, action) = fixture(url);
+        let start = Instant::now();
+        assert!(
+            run_post_process_action(&settings, "Keep this local text", &action)
+                .await
+                .is_none()
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    }
+}

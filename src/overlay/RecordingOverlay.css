@@ -81,7 +81,7 @@
 
 .bar {
   flex: 1;
-  background: rgba(255, 255, 255, 0.6);
+  background: #4ade80;
   max-height: 22px;
   border-radius: 1.5px;
   min-height: 3px;

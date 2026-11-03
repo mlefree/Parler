@@ -1,6 +1,6 @@
 # Build Instructions
 
-This guide covers how to set up the development environment and build Handy from source across different platforms.
+This guide covers Parler desktop builds. The customized 1.0.0 installation is validated on macOS; platform instructions inherited from Handy remain for development on Windows and Linux. See README.md for current features and offline fallback behavior.
 
 ## Prerequisites
 
@@ -48,6 +48,40 @@ This guide covers how to set up the development environment and build Handy from
   ```
 
 ## Setup Instructions
+
+### Local macOS installation and testing
+
+Run `bun run deploy:local` to build, install and launch `/Applications/Parler.app`.
+The script uses a persistent local code-signing identity instead of ad-hoc signing,
+so subsequent builds keep the same macOS code identity. Only the installed app is
+launched; the generated bundle is kept under the ignored `.local-build` directory
+and renamed after deployment to avoid duplicate app entries.
+
+On the first run, the script creates a local code-signing certificate in the login
+keychain. macOS may ask you to authorize `codesign` to use that key; choose Always
+Allow for this dedicated key if you want unattended builds. The certificate is
+trusted for code signing only. Its private key is imported as non-extractable and
+the temporary private-key files are removed. The public certificate is kept in
+`~/Library/Application Support/Parler Build Signing/certificate.pem`.
+
+The first transition from ad-hoc signing to this identity may require granting
+Microphone and Accessibility once more. Keep the signing identity and app bundle
+identifier unchanged afterward; do not reset permissions during normal updates.
+Settings, API keys and models remain in the existing application data directory.
+This local signing workflow is for this Mac, not notarized public distribution.
+
+The local deployment strips executable symbols by default to reduce installed size.
+Set `CARGO_PROFILE_RELEASE_STRIP=false` when a diagnostic build needs symbols.
+Audio feedback playback and its Rodio dependency have been removed; WAV sound
+themes are excluded from the bundle. General and advanced settings show the
+core dictation controls, microphone, history and learning corpus. Legacy
+settings remain readable for compatibility. Transcription engines and downloaded
+models remain available for bilingual model comparisons; this cleanup does not
+delete model files, history or learning recordings.
+
+The identity can also be initialized separately with `bun run setup:local-signing`.
+If the certificate exists but its keychain identity is missing, deployment stops
+instead of silently generating a different identity.
 
 ### 1. Clone the Repository
 

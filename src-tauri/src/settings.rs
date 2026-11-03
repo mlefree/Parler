@@ -118,6 +118,11 @@ pub struct PostProcessAction {
     pub icon: String,
     #[serde(default)]
     pub trigger_key: Option<u8>,
+    /// Optional Markdown vault searched locally before this action runs.
+    #[serde(default)]
+    pub brain_path: Option<String>,
+    #[serde(default)]
+    pub communication_channel: Option<String>,
 }
 
 pub fn default_action_icon() -> String {
@@ -374,6 +379,8 @@ impl std::ops::DerefMut for SecretMap {
 /* still handy for composing the initial JSON in the store ------------- */
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub learning: crate::learning::LearningSettings,
     pub bindings: HashMap<String, ShortcutBinding>,
     pub push_to_talk: bool,
     pub audio_feedback: bool,
@@ -571,6 +578,14 @@ fn default_post_process_provider_id() -> String {
 
 fn default_post_process_providers() -> Vec<PostProcessProvider> {
     let mut providers = vec![
+        PostProcessProvider {
+            id: "mistral".to_string(),
+            label: "Mistral".to_string(),
+            base_url: "https://api.mistral.ai/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: false,
+        },
         PostProcessProvider {
             id: "openai".to_string(),
             label: "OpenAI".to_string(),
@@ -800,6 +815,8 @@ fn ensure_post_process_actions(settings: &mut AppSettings) -> bool {
                 llm_model_id: default_model_id.clone(),
                 icon: default_action_icon(),
                 trigger_key,
+                brain_path: None,
+                communication_channel: None,
             });
         }
     }
@@ -942,6 +959,7 @@ pub fn get_default_settings() -> AppSettings {
     );
 
     AppSettings {
+        learning: crate::learning::LearningSettings::default(),
         bindings,
         push_to_talk: true,
         audio_feedback: false,

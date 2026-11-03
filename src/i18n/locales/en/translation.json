@@ -148,6 +148,30 @@
     }
   },
   "settings": {
+    "learning": {
+      "title": "Learning corpus",
+      "enabled": "Learning mode",
+      "description": "Save completed dictations and history replays locally while enabled. Turning this off stops new samples; existing samples remain.",
+      "audio": "Include audio",
+      "audioDescription": "Keep an independent WAV copy with each sample, even when the normal history is pruned.",
+      "folder": "Corpus folder",
+      "openFolder": "Open corpus folder",
+      "refresh": "Refresh samples",
+      "noTraining": "Collection only: no model is trained and no vocabulary is changed automatically.",
+      "empty": "No learning samples yet. Enable the mode, then dictate or re-transcribe a history entry.",
+      "compare": "Compare raw recognition and model output",
+      "raw": "Raw recognition",
+      "model": "Model output",
+      "noPostProcess": "No successful post-processing output",
+      "audioSaved": "Audio saved with this sample.",
+      "noAudio": "No audio stored with this sample.",
+      "correction": "Your final correction",
+      "correctionPlaceholder": "Enter the text you actually intended. Leave empty while unreviewed.",
+      "saveCorrection": "Save correction",
+      "saved": "Correction saved separately; original texts are unchanged.",
+      "active": "Learning on",
+      "captureError": "Learning sample could not be saved"
+    },
     "modelSettings": {
       "title": "{{model}} Settings",
       "noSettingsNeeded": "This model works automatically with no configuration needed."
@@ -250,6 +274,8 @@
         "alreadySaved": "This model is already saved."
       },
       "languageModels": {
+        "editModel": "Edit model",
+        "apiKeyHint": "The key is shared by all models from this provider. Changes are applied when you save.",
         "description": "Add the language models you want to use for post-processing. Provide your provider API key once, then pick a model.",
         "addModel": "Add model",
         "provider": "Provider",
@@ -467,6 +493,16 @@
         "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
       },
       "actions": {
+        "communicationChannel": "Communication channel",
+        "channelDictation": "Dictation — keep spoken language(s)",
+        "channelSlack": "Team Slack",
+        "channelFrenchies": "Frenchies DM",
+        "channelEmail": "Email",
+        "channelDocs": "Professional documents",
+        "channelChatgpt": "ChatGPT",
+        "communicationHint": "Reads Lexical dictation.md and Communication.md from the brain folder on each dictation. Language and tone follow the selected profile in Communication.md; the channel is not detected from the active app.",
+        "brainFolder": "Brain folder (optional)",
+        "brainHint": "Searches Markdown notes locally. Candidate vocabulary and relevant excerpts are sent with your transcript to the selected model. Leave empty to disable.",
         "newAction": "New action",
         "newTitle": "New action",
         "editTitle": "Edit action",
@@ -697,5 +733,6 @@
     "transcribing": "Transcribing...",
     "processing": "Processing...",
     "cancelConfirm": "Esc again to cancel"
-  }
+  },
+  "postProcessFallback": "Correction unavailable or too slow: local transcription preserved."
 }

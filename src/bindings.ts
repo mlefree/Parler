@@ -5,6 +5,22 @@
 
 
 export const commands = {
+async configureLearning(enabled: boolean, saveAudio: boolean, directory: string) : Promise<Result<null, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("configure_learning", { enabled, saveAudio, directory }) }; }
+    catch (e) { if(e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async getLearningSamples() : Promise<Result<LearningSample[], string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("get_learning_samples", {  }) }; }
+    catch (e) { if(e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async saveLearningCorrection(id: string, correction: string) : Promise<Result<null, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("save_learning_correction", { id, correction }) }; }
+    catch (e) { if(e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
+async openLearningFolder() : Promise<Result<null, string>> {
+    try { return { status: "ok", data: await TAURI_INVOKE("open_learning_folder", {  }) }; }
+    catch (e) { if(e instanceof Error) throw e; else return { status: "error", error: e as any }; }
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -224,9 +240,9 @@ async setPostProcessProvider(providerId: string) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
-async fetchPostProcessModels(providerId: string) : Promise<Result<string[], string>> {
+async fetchPostProcessModels(providerId: string, apiKey: string | null) : Promise<Result<string[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_post_process_models", { providerId }) };
+    return { status: "ok", data: await TAURI_INVOKE("fetch_post_process_models", { providerId, apiKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -272,6 +288,14 @@ async addLlmModel(providerId: string, model: string, label: string) : Promise<Re
     else return { status: "error", error: e  as any };
 }
 },
+async updateLlmModel(id: string, providerId: string, model: string, label: string, apiKey: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_llm_model", { id, providerId, model, label, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
 async deleteLlmModel(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_llm_model", { id }) };
@@ -280,17 +304,17 @@ async deleteLlmModel(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async addPostProcessAction(name: string, prompt: string, llmModelId: string | null, icon: string, triggerKey: number | null) : Promise<Result<PostProcessAction, string>> {
+async addPostProcessAction(name: string, prompt: string, llmModelId: string | null, icon: string, triggerKey: number | null, brainPath: string | null, communicationChannel: string | null) : Promise<Result<PostProcessAction, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_post_process_action", { name, prompt, llmModelId, icon, triggerKey }) };
+    return { status: "ok", data: await TAURI_INVOKE("add_post_process_action", { name, prompt, llmModelId, icon, triggerKey, brainPath, communicationChannel }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async updatePostProcessAction(id: string, name: string, prompt: string, llmModelId: string | null, icon: string, triggerKey: number | null) : Promise<Result<null, string>> {
+async updatePostProcessAction(id: string, name: string, prompt: string, llmModelId: string | null, icon: string, triggerKey: number | null, brainPath: string | null, communicationChannel: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_post_process_action", { id, name, prompt, llmModelId, icon, triggerKey }) };
+    return { status: "ok", data: await TAURI_INVOKE("update_post_process_action", { id, name, prompt, llmModelId, icon, triggerKey, brainPath, communicationChannel }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -752,9 +776,6 @@ async getSelectedOutputDevice() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async playTestSound(soundType: string) : Promise<void> {
-    await TAURI_INVOKE("play_test_sound", { soundType });
-},
 async checkCustomSounds() : Promise<CustomSounds> {
     return await TAURI_INVOKE("check_custom_sounds");
 },
@@ -903,7 +924,7 @@ historyUpdatePayload: "history-update-payload"
 
 /** user-defined types **/
 
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; llm_models?: LLMModel[]; post_process_actions?: PostProcessAction[]; post_process_actions_initialized?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number; long_audio_model?: string | null; long_audio_threshold_seconds?: number }
+export type AppSettings = { learning?: LearningSettings;  bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; llm_models?: LLMModel[]; post_process_actions?: PostProcessAction[]; post_process_actions_initialized?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number; long_audio_model?: string | null; long_audio_threshold_seconds?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
@@ -944,7 +965,7 @@ export type PermissionAccess = "allowed" | "denied" | "unknown"
  * (stored in `bindings` under `ppa_<id>`) or by pressing `trigger_key`
  * while a recording is in progress.
  */
-export type PostProcessAction = { id: string; name: string; prompt: string; llm_model_id?: string | null; icon?: string; trigger_key?: number | null }
+export type PostProcessAction = { id: string; name: string; prompt: string; llm_model_id?: string | null; icon?: string; trigger_key?: number | null; brain_path?: string | null; communication_channel?: string | null }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type SecretMap = Partial<{ [key in string]: string }>
@@ -1013,3 +1034,6 @@ function __makeEvents__<T extends Record<string, any>>(
 		},
 	);
 }
+
+export type LearningSettings = { enabled: boolean; save_audio: boolean; directory: string | null };
+export type LearningSample = { id: string; created_at: string; raw_transcript: string; transcript: string; model_output: string | null; output_text: string; user_correction: string; audio_saved: boolean };

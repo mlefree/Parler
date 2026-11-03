@@ -1,13 +1,17 @@
 mod actions;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
-mod audio_feedback;
 pub mod audio_toolkit;
+mod brain_context;
+mod brain_reference;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod communication;
 mod helpers;
 mod input;
+mod learning;
+mod lexicon;
 mod llm_client;
 mod managers;
 mod overlay;
@@ -324,6 +328,10 @@ pub fn run(cli_args: CliArgs) {
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             shortcut::change_binding,
+            commands::learning::configure_learning,
+            commands::learning::get_learning_samples,
+            commands::learning::save_learning_correction,
+            commands::learning::open_learning_folder,
             shortcut::reset_binding,
             shortcut::change_ptt_setting,
             shortcut::change_audio_feedback_setting,
@@ -357,6 +365,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::delete_post_process_prompt,
             shortcut::set_post_process_selected_prompt,
             shortcut::add_llm_model,
+            shortcut::update_llm_model,
             shortcut::delete_llm_model,
             shortcut::add_post_process_action,
             shortcut::update_post_process_action,
@@ -416,7 +425,6 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::get_available_output_devices,
             commands::audio::set_selected_output_device,
             commands::audio::get_selected_output_device,
-            commands::audio::play_test_sound,
             commands::audio::check_custom_sounds,
             commands::audio::set_clamshell_microphone,
             commands::audio::get_clamshell_microphone,
@@ -624,6 +632,19 @@ pub fn run(cli_args: CliArgs) {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if let tauri::RunEvent::Exit = &event {
+                // macOS can exit directly from NSApplication's Quit action, before
+                // Rust drops Tauri's managed state. Release the engine first so
+                // ggml's Metal shutdown does not find live GPU resources.
+                if let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() {
+                    audio.shutdown();
+                }
+                if let Some(transcription) = app.try_state::<Arc<TranscriptionManager>>() {
+                    if let Err(error) = transcription.unload_model() {
+                        log::error!("Failed to unload model during shutdown: {}", error);
+                    }
+                }
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
                 show_main_window(app);

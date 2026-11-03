@@ -11,6 +11,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Core Development:**
 
+For local macOS testing on this machine, use `bun run deploy:local`. It builds
+with the persistent local signing identity, installs `/Applications/Parler.app`,
+and launches only that installed copy. Do not launch the build bundle or use
+`tauri dev` for permission-sensitive manual testing. Do not reset TCC permissions
+or regenerate the local signing identity during routine updates.
+
 ```bash
 # Install dependencies
 bun install
@@ -105,10 +111,21 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri (R
 Settings are stored using Tauri's store plugin with reactive updates:
 
 - Keyboard shortcuts (configurable, supports push-to-talk)
-- Audio devices (microphone/output selection)
+- Microphone selection (feedback output controls removed)
 - Model preferences (Small/Medium/Turbo/Large Whisper variants)
-- Audio feedback and translation options
+- Bilingual local dictation and optional cloud correction with bounded fallback
 
 ### Single Instance Architecture
 
 The app enforces single instance behavior - launching when already running brings the settings window to front rather than creating a new process.
+
+### Customized desktop behavior
+
+- README.md describes this Parler build; docs/UPSTREAM_README.md is historical.
+- Mistral correction has a 2-second connect timeout and 5-second HTTP total timeout.
+  The complete asynchronous correction action has an 8-second deadline after ASR.
+  On failure, retain local text and continue the normal paste path; never replace it later.
+- Do not describe cloud brain correction as fully offline or streaming.
+- Keep desktop versions synchronized and document changes in CHANGELOG.md.
+- Preserve the brain markers, user lexicon edits, history and opt-in learning corpus.
+- Feedback-sound playback is removed; legacy settings remain for compatibility.

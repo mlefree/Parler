@@ -30,6 +30,8 @@ struct ChatCompletionRequest {
     messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +91,8 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
     let headers = build_headers(provider, api_key)?;
     reqwest::Client::builder()
         .default_headers(headers)
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
@@ -155,6 +159,7 @@ pub async fn send_chat_completion_with_schema(
         model: model.to_string(),
         messages,
         response_format,
+        temperature: (provider.id == "mistral").then_some(0.0),
     };
 
     let response = client

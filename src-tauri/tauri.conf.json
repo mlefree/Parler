@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Parler",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "identifier": "com.melvynx.parler",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -27,7 +27,7 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
-    "resources": ["resources/**/*"],
+    "resources": ["resources/*.png", "resources/*.json", "resources/models/*"],
     "license": "MIT",
     "icon": [
       "icons/32x32.png",

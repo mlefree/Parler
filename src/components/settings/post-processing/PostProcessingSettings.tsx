@@ -83,6 +83,10 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
   const [triggerKey, setTriggerKey] = useState<number | null>(
     action?.trigger_key ?? null,
   );
+  const [brainPath, setBrainPath] = useState(action?.brain_path ?? "");
+  const [channel, setChannel] = useState(
+    action?.communication_channel ?? "dictation",
+  );
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -113,7 +117,10 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
     return options;
   }, [actions, action?.id, t]);
 
-  const canSave = name.trim().length > 0 && prompt.trim().length > 0;
+  const canSave =
+    name.trim().length > 0 &&
+    prompt.trim().length > 0 &&
+    (channel === "dictation" || brainPath.trim().length > 0);
 
   const handleSave = useCallback(async () => {
     if (!canSave) return;
@@ -128,6 +135,8 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
           llmModelId,
           icon,
           triggerKey,
+          brainPath.trim() || null,
+          channel === "dictation" ? null : channel,
         );
         if (result.status === "ok") {
           await refreshSettings();
@@ -142,6 +151,8 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
           llmModelId,
           icon,
           triggerKey,
+          brainPath.trim() || null,
+          channel === "dictation" ? null : channel,
         );
         if (result.status === "ok") {
           await refreshSettings();
@@ -161,6 +172,8 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
     llmModelId,
     icon,
     triggerKey,
+    brainPath,
+    channel,
     refreshSettings,
     onSaved,
   ]);
@@ -251,6 +264,87 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
         </div>
 
         <div className="space-y-1.5">
+          <label
+            className="text-sm font-medium text-text/80"
+            htmlFor="brain-folder"
+          >
+            {t("settings.postProcessing.actions.brainFolder", {
+              defaultValue: "Brain folder (optional)",
+            })}
+          </label>
+          <Input
+            id="brain-folder"
+            value={brainPath}
+            onChange={(e) => setBrainPath(e.target.value)}
+            placeholder="/absolute/path/to/markdown-notes"
+            className="w-full"
+          />
+          <p className="text-xs text-text/45">
+            {t("settings.postProcessing.actions.brainHint", {
+              defaultValue:
+                "Searches Markdown notes locally. Candidate vocabulary and relevant excerpts are sent with your transcript to the selected model. Leave empty to disable.",
+            })}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text/80">
+            {t("settings.postProcessing.actions.communicationChannel", {
+              defaultValue: "Communication channel",
+            })}
+          </label>
+          <Dropdown
+            selectedValue={channel}
+            onSelect={setChannel}
+            options={[
+              {
+                value: "dictation",
+                label: t("settings.postProcessing.actions.channelDictation", {
+                  defaultValue: "Dictation — keep spoken language(s)",
+                }),
+              },
+              {
+                value: "slack-team",
+                label: t("settings.postProcessing.actions.channelSlack", {
+                  defaultValue: "Team Slack — English",
+                }),
+              },
+              {
+                value: "frenchies-dm",
+                label: t("settings.postProcessing.actions.channelFrenchies", {
+                  defaultValue: "Frenchies DM — French",
+                }),
+              },
+              {
+                value: "email",
+                label: t("settings.postProcessing.actions.channelEmail", {
+                  defaultValue: "Email — French by default",
+                }),
+              },
+              {
+                value: "professional-docs",
+                label: t("settings.postProcessing.actions.channelDocs", {
+                  defaultValue: "Professional documents — English",
+                }),
+              },
+              {
+                value: "chatgpt",
+                label: t("settings.postProcessing.actions.channelChatgpt", {
+                  defaultValue: "ChatGPT — keep spoken language(s)",
+                }),
+              },
+            ]}
+            className="w-full"
+          />
+          <p className="text-xs text-text/45">
+            {t("settings.postProcessing.actions.communicationHint", {
+              defaultValue:
+                "Reads Lexical dictation.md and Communication.md from the brain folder on each dictation. The channel is selected here, not detected from the active app.",
+            })}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
           <label className="text-sm font-medium text-text/80">
             {t("settings.postProcessing.actions.model")}
           </label>
@@ -259,7 +353,9 @@ const ActionDialog: React.FC<ActionDialogProps> = ({
               selectedValue={llmModelId}
               options={modelOptions}
               onSelect={(value) => setLlmModelId(value)}
-              placeholder={t("settings.postProcessing.actions.modelPlaceholder")}
+              placeholder={t(
+                "settings.postProcessing.actions.modelPlaceholder",
+              )}
               className="w-full"
             />
           ) : (

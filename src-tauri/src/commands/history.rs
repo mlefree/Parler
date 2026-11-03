@@ -126,18 +126,55 @@ pub async fn retry_history_entry_transcription(
 
     transcription_manager.initiate_model_load();
 
+    let settings = crate::settings::get_settings(&app);
+    let brain_path = settings
+        .default_post_process_action()
+        .and_then(|a| a.brain_path.clone());
     let tm = Arc::clone(&transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
-        .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
-        .map_err(|e| e.to_string())?;
+    let details = tauri::async_runtime::spawn_blocking(move || {
+        tm.transcribe_details_with_brain(samples, brain_path.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Transcription task panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
+    let transcription = details.text.clone();
     if transcription.is_empty() {
         return Err("Recording contains no speech".to_string());
     }
 
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+    let action = if entry.post_process_requested {
+        settings.default_post_process_action().cloned()
+    } else {
+        None
+    };
+    let mut processed = process_transcription_output(&app, &transcription, false).await;
+    let mut trace = None;
+    if let Some(action) = &action {
+        if let Some(result) = crate::actions::run_post_process_action_with_trace(
+            &settings,
+            &processed.final_text,
+            action,
+        )
+        .await
+        {
+            trace = Some(result.trace);
+            processed.final_text = result.text.clone();
+            processed.post_processed_text = Some(result.text);
+            processed.post_process_prompt = Some(action.prompt.clone());
+        }
+    }
+    crate::actions::collect_learning_sample(
+        &app,
+        &settings,
+        Some(&audio_path),
+        &details,
+        &processed,
+        action.as_ref(),
+        trace,
+        "history-replay",
+        None,
+    );
     history_manager
         .update_transcription(
             id,

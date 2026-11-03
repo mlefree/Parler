@@ -115,7 +115,25 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const unlisten = listen("post-process-fallback", () => {
+      toast.info(t("postProcessFallback"));
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, [t]);
+
   // Listen for recording errors from the backend and show a toast
+  useEffect(() => {
+    const unlisten = listen<string>("learning-error", (event) => {
+      toast.error(t("settings.learning.captureError"), {
+        description: event.payload,
+      });
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [t]);
+
   useEffect(() => {
     const unlisten = listen<RecordingErrorEvent>("recording-error", (event) => {
       const { error_type, detail } = event.payload;

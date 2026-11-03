@@ -36,6 +36,17 @@ pub struct ModelStateEvent {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct TranscriptionOutput {
+    pub raw_text: String,
+    pub text: String,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+    pub language_setting: Option<String>,
+    pub recognition_prompt: Option<String>,
+    pub duration_ms: u64,
+}
+
 enum LoadedEngine {
     Whisper(WhisperEngine),
     Parakeet(ParakeetModel),
@@ -437,6 +448,23 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        self.transcribe_with_brain(audio, None)
+    }
+
+    pub fn transcribe_with_brain(
+        &self,
+        audio: Vec<f32>,
+        brain_path: Option<&str>,
+    ) -> Result<String> {
+        self.transcribe_details_with_brain(audio, brain_path)
+            .map(|result| result.text)
+    }
+
+    pub fn transcribe_details_with_brain(
+        &self,
+        audio: Vec<f32>,
+        brain_path: Option<&str>,
+    ) -> Result<TranscriptionOutput> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -454,7 +482,7 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("Empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(String::new());
+            return Ok(TranscriptionOutput::default());
         }
 
         // Duration-based model switching: if the audio exceeds the configured
@@ -515,6 +543,25 @@ impl TranscriptionManager {
 
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
+
+        let brain_path = brain_path.or_else(|| {
+            settings
+                .default_post_process_action()
+                .and_then(|a| a.brain_path.as_deref())
+        });
+        let lexicon = brain_path
+            .map(|p| crate::lexicon::load(std::path::Path::new(p)))
+            .transpose()
+            .unwrap_or_else(|error| {
+                warn!("Dictation lexicon unavailable: {}", error);
+                None
+            })
+            .unwrap_or_default();
+        let recognition_prompt = lexicon.recognition_prompt(&settings.custom_words);
+        debug!(
+            "Recognition vocabulary: {} lexicon entries",
+            lexicon.entries.len()
+        );
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
@@ -584,11 +631,7 @@ impl TranscriptionManager {
                             let params = WhisperInferenceParams {
                                 language: whisper_language,
                                 translate: settings.translate_to_english,
-                                initial_prompt: if settings.custom_words.is_empty() {
-                                    None
-                                } else {
-                                    Some(settings.custom_words.join(", "))
-                                },
+                                initial_prompt: recognition_prompt.clone(),
                                 ..Default::default()
                             };
 
@@ -712,6 +755,7 @@ impl TranscriptionManager {
             .map(|info| matches!(info.engine_type, EngineType::Whisper))
             .unwrap_or(false);
 
+        let raw_text = result.text.clone();
         let corrected_result = if !settings.custom_words.is_empty() && !is_whisper {
             apply_custom_words(
                 &result.text,
@@ -749,9 +793,17 @@ impl TranscriptionManager {
             info!("Transcription result: {}", final_result);
         }
 
+        let output = TranscriptionOutput {
+            raw_text,
+            text: final_result,
+            model_id: self.get_current_model(),
+            model_name: self.get_current_model_name(),
+            language_setting: Some(validated_language),
+            recognition_prompt,
+            duration_ms: (et - st).as_millis() as u64,
+        };
         self.maybe_unload_immediately("transcription");
-
-        Ok(final_result)
+        Ok(output)
     }
 }
 

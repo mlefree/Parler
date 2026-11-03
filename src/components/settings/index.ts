@@ -10,10 +10,8 @@ export { ModelsSettings } from "./models/ModelsSettings";
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";
 export { ClamshellMicrophoneSelector } from "./ClamshellMicrophoneSelector";
-export { OutputDeviceSelector } from "./OutputDeviceSelector";
 export { AlwaysOnMicrophone } from "./AlwaysOnMicrophone";
 export { PushToTalk } from "./PushToTalk";
-export { AudioFeedback } from "./AudioFeedback";
 export { ShowOverlay } from "./ShowOverlay";
 export { GlobalShortcutInput } from "./GlobalShortcutInput";
 export { HandyKeysShortcutInput } from "./HandyKeysShortcutInput";

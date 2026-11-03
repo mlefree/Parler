@@ -148,6 +148,30 @@
     "cancelDownload": "Annuler le téléchargement"
   },
   "settings": {
+    "learning": {
+      "title": "Corpus d’apprentissage",
+      "enabled": "Mode d’apprentissage",
+      "description": "Conserve les dictées terminées et les relectures de l’historique en local tant que ce mode est actif. L’arrêt du mode conserve les exemples existants.",
+      "audio": "Conserver l’audio",
+      "audioDescription": "Copie le WAV avec chaque exemple, indépendamment du nettoyage de l’historique habituel.",
+      "folder": "Dossier du corpus",
+      "openFolder": "Ouvrir le dossier du corpus",
+      "refresh": "Actualiser les exemples",
+      "noTraining": "Collecte uniquement : aucun modèle n’est entraîné et aucun vocabulaire n’est modifié automatiquement.",
+      "empty": "Aucun exemple pour le moment. Activez le mode, puis dictez ou relancez une transcription de l’historique.",
+      "compare": "Comparer la reconnaissance brute et la sortie du modèle",
+      "raw": "Reconnaissance brute",
+      "model": "Sortie du modèle",
+      "noPostProcess": "Aucun résultat de post-traitement réussi",
+      "audioSaved": "Audio conservé avec cet exemple.",
+      "noAudio": "Aucun audio conservé avec cet exemple.",
+      "correction": "Votre correction finale",
+      "correctionPlaceholder": "Saisissez le texte réellement souhaité. Laissez vide tant que l’exemple n’est pas relu.",
+      "saveCorrection": "Enregistrer la correction",
+      "saved": "Correction enregistrée séparément ; les textes d’origine sont conservés.",
+      "active": "Apprentissage actif",
+      "captureError": "Impossible d’enregistrer l’exemple d’apprentissage"
+    },
     "modelSettings": {
       "title": "Paramètres de {{model}}",
       "noSettingsNeeded": "Ce modèle fonctionne automatiquement sans configuration nécessaire."
@@ -170,6 +194,8 @@
       "yourModels": "Modèles téléchargés",
       "availableModels": "Disponibles au téléchargement",
       "languageModels": {
+        "editModel": "Modifier le modèle",
+        "apiKeyHint": "La clé est partagée par tous les modèles de ce fournisseur. Les changements sont appliqués quand vous enregistrez.",
         "description": "Ajoutez les modèles de langage à utiliser pour le post-traitement. Renseignez la clé API du fournisseur une fois, puis choisissez un modèle.",
         "addModel": "Ajouter un modèle",
         "provider": "Fournisseur",
@@ -438,6 +464,16 @@
       },
       "description": "Créez des actions de post-traitement qui réécrivent votre transcription avec un modèle d’IA. Déclenchez-les via un raccourci global ou en appuyant sur une touche numérique pendant l’enregistrement.",
       "actions": {
+        "communicationChannel": "Canal de communication",
+        "channelDictation": "Dictée — conserver les langues parlées",
+        "channelSlack": "Slack équipe",
+        "channelFrenchies": "Message aux Frenchies",
+        "channelEmail": "E-mail",
+        "channelDocs": "Documents professionnels",
+        "channelChatgpt": "ChatGPT",
+        "communicationHint": "Relit Lexical dictation.md et Communication.md dans le dossier brain à chaque dictée. La langue et le ton suivent le profil choisi dans Communication.md ; le canal n’est pas déduit de l’application active.",
+        "brainFolder": "Dossier brain (facultatif)",
+        "brainHint": "Recherche dans les notes Markdown en local. Le vocabulaire et les extraits pertinents sont transmis avec votre dictée au modèle sélectionné. Laissez vide pour désactiver.",
         "newAction": "Nouvelle action",
         "newTitle": "Nouvelle action",
         "editTitle": "Modifier l’action",
@@ -667,5 +703,6 @@
     "transcribing": "Transcription...",
     "processing": "Traitement...",
     "cancelConfirm": "Esc pour annuler"
-  }
+  },
+  "postProcessFallback": "Correction indisponible ou trop lente : transcription locale conservée."
 }
